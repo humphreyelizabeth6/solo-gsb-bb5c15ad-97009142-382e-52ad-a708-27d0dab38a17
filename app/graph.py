@@ -83,44 +83,61 @@ def _bfs_reachable(start: Any, adjacency: dict[Any, list]) -> set:
 
 
 def _find_cycle_nodes(node_ids: list, adjacency: dict[Any, list]) -> list:
-    """Nodes that belong to a directed cycle (Tarjan SCC, size>1 or self-loop)."""
-    index_counter = [0]
+    """Nodes that belong to a directed cycle (Tarjan SCC, size>1 or self-loop).
+
+    Iterative: an explicit work stack replaces the call stack, so chains of
+    thousands of nodes cannot hit the interpreter recursion limit.
+    """
+    index_counter = 0
     stack: list = []
     on_stack: set = set()
     indices: dict = {}
     lowlink: dict = {}
     cycle_nodes: set = set()
 
-    def strongconnect(v):
-        indices[v] = index_counter[0]
-        lowlink[v] = index_counter[0]
-        index_counter[0] += 1
-        stack.append(v)
-        on_stack.add(v)
-
-        for w in adjacency.get(v, []):
-            if w not in indices:
-                strongconnect(w)
-                lowlink[v] = min(lowlink[v], lowlink[w])
-            elif w in on_stack:
-                lowlink[v] = min(lowlink[v], indices[w])
-
-        if lowlink[v] == indices[v]:
-            component = []
-            while True:
-                w = stack.pop()
-                on_stack.discard(w)
-                component.append(w)
-                if w == v:
+    for root in node_ids:
+        if root in indices:
+            continue
+        indices[root] = lowlink[root] = index_counter
+        index_counter += 1
+        stack.append(root)
+        on_stack.add(root)
+        # Work frames: (node, iterator over its not-yet-processed successors).
+        work: list = [(root, iter(adjacency.get(root, [])))]
+        while work:
+            v, succ = work[-1]
+            descended = False
+            for w in succ:
+                if w not in indices:
+                    indices[w] = lowlink[w] = index_counter
+                    index_counter += 1
+                    stack.append(w)
+                    on_stack.add(w)
+                    work.append((w, iter(adjacency.get(w, []))))
+                    descended = True
                     break
-            if len(component) > 1:
-                cycle_nodes.update(component)
-            elif v in adjacency.get(v, []):
-                cycle_nodes.add(v)
-
-    for nid in node_ids:
-        if nid not in indices:
-            strongconnect(nid)
+                if w in on_stack:
+                    lowlink[v] = min(lowlink[v], indices[w])
+            if descended:
+                continue
+            # All successors of v processed: close the frame and propagate
+            # lowlink to the parent frame, like the recursive return would.
+            work.pop()
+            if work:
+                parent = work[-1][0]
+                lowlink[parent] = min(lowlink[parent], lowlink[v])
+            if lowlink[v] == indices[v]:
+                component = []
+                while True:
+                    w = stack.pop()
+                    on_stack.discard(w)
+                    component.append(w)
+                    if w == v:
+                        break
+                if len(component) > 1:
+                    cycle_nodes.update(component)
+                elif v in adjacency.get(v, []):
+                    cycle_nodes.add(v)
     return list(cycle_nodes)
 
 

@@ -49,23 +49,44 @@ function bfsReachable(start, adj) {
 function tarjanCycles(ids, adj) {
   let counter = 0;
   const index = new Map(), low = new Map(), stack = [], on = new Set(), cyc = new Set();
-  const connect = (v) => {
-    index.set(v, counter); low.set(v, counter); counter++;
-    stack.push(v); on.add(v);
-    for (const w of adj.get(v) || []) {
-      if (!w) continue;
-      if (!index.has(w)) { connect(w); low.set(v, Math.min(low.get(v), low.get(w))); }
-      else if (on.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
+  for (const root of ids) {
+    if (index.has(root)) continue;
+    // Explicit work stack instead of recursion: long chains must not overflow
+    // the call stack. Frame: [node, successors, next successor position].
+    index.set(root, counter); low.set(root, counter); counter++;
+    stack.push(root); on.add(root);
+    const work = [[root, adj.get(root) || [], 0]];
+    while (work.length) {
+      const frame = work[work.length - 1];
+      const v = frame[0], succ = frame[1];
+      if (frame[2] < succ.length) {
+        const w = succ[frame[2]++];
+        if (!w) continue;
+        if (!index.has(w)) {
+          index.set(w, counter); low.set(w, counter); counter++;
+          stack.push(w); on.add(w);
+          work.push([w, adj.get(w) || [], 0]);
+        } else if (on.has(w)) {
+          low.set(v, Math.min(low.get(v), index.get(w)));
+        }
+        continue;
+      }
+      // All successors of v processed: close the frame and propagate lowlink
+      // to the parent frame, like the recursive return would.
+      work.pop();
+      if (work.length) {
+        const p = work[work.length - 1][0];
+        low.set(p, Math.min(low.get(p), low.get(v)));
+      }
+      if (low.get(v) === index.get(v)) {
+        const comp = [];
+        let w;
+        do { w = stack.pop(); on.delete(w); comp.push(w); } while (w !== v);
+        if (comp.length > 1) comp.forEach((x) => cyc.add(x));
+        else if ((adj.get(v) || []).includes(v)) cyc.add(v);
+      }
     }
-    if (low.get(v) === index.get(v)) {
-      const comp = [];
-      let w;
-      do { w = stack.pop(); on.delete(w); comp.push(w); } while (w !== v);
-      if (comp.length > 1) comp.forEach((x) => cyc.add(x));
-      else if ((adj.get(v) || []).includes(v)) cyc.add(v);
-    }
-  };
-  ids.forEach((id) => { if (!index.has(id)) connect(id); });
+  }
   return cyc;
 }
 
