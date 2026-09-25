@@ -11,7 +11,9 @@ def validate(content: dict[str, Any]) -> dict[str, list]:
     """Return validation markers for a script.
 
     Markers:
-      cycles  : ids of nodes that lie on / lead into a directed cycle
+      cycles  : ids of nodes that lie on a directed cycle (a nontrivial SCC
+                or a self-loop); predecessors that merely lead into a cycle
+                are NOT marked
       orphans : ids of nodes unreachable from the start node
       uncovered: node ids that have no options and no explicit terminal flag,
                  or an option whose target is missing/empty
@@ -83,44 +85,66 @@ def _bfs_reachable(start: Any, adjacency: dict[Any, list]) -> set:
 
 
 def _find_cycle_nodes(node_ids: list, adjacency: dict[Any, list]) -> list:
-    """Nodes that belong to a directed cycle (Tarjan SCC, size>1 or self-loop)."""
-    index_counter = [0]
+    """Nodes that belong to a directed cycle (Tarjan SCC, size>1 or self-loop).
+
+    Iterative Tarjan with an explicit work stack, so a thousand-node straight
+    path cannot blow the Python call limit. Each frame is
+    ``[node, next-neighbor-index]``: when a frame resumes after a child SCC
+    search it keeps scanning the remaining neighbors.
+    """
+    index_counter = 0
     stack: list = []
     on_stack: set = set()
     indices: dict = {}
     lowlink: dict = {}
     cycle_nodes: set = set()
 
-    def strongconnect(v):
-        indices[v] = index_counter[0]
-        lowlink[v] = index_counter[0]
-        index_counter[0] += 1
-        stack.append(v)
-        on_stack.add(v)
+    def close_component(root: Any) -> None:
+        component = []
+        while True:
+            w = stack.pop()
+            on_stack.discard(w)
+            component.append(w)
+            if w == root:
+                break
+        if len(component) > 1:
+            cycle_nodes.update(component)
+        elif root in adjacency.get(root, []):
+            cycle_nodes.add(root)
 
-        for w in adjacency.get(v, []):
-            if w not in indices:
-                strongconnect(w)
-                lowlink[v] = min(lowlink[v], lowlink[w])
-            elif w in on_stack:
-                lowlink[v] = min(lowlink[v], indices[w])
-
-        if lowlink[v] == indices[v]:
-            component = []
-            while True:
-                w = stack.pop()
-                on_stack.discard(w)
-                component.append(w)
-                if w == v:
-                    break
-            if len(component) > 1:
-                cycle_nodes.update(component)
-            elif v in adjacency.get(v, []):
-                cycle_nodes.add(v)
-
-    for nid in node_ids:
-        if nid not in indices:
-            strongconnect(nid)
+    for start in node_ids:
+        if start in indices:
+            continue
+        indices[start] = index_counter
+        lowlink[start] = index_counter
+        index_counter += 1
+        stack.append(start)
+        on_stack.add(start)
+        # Explicit DFS stack: [node, index of the next neighbor to visit].
+        call_stack: list[list] = [[start, 0]]
+        while call_stack:
+            frame = call_stack[-1]
+            v = frame[0]
+            neighbors = adjacency.get(v, [])
+            if frame[1] < len(neighbors):
+                w = neighbors[frame[1]]
+                frame[1] += 1
+                if w not in indices:
+                    indices[w] = index_counter
+                    lowlink[w] = index_counter
+                    index_counter += 1
+                    stack.append(w)
+                    on_stack.add(w)
+                    call_stack.append([w, 0])
+                elif w in on_stack:
+                    lowlink[v] = min(lowlink[v], indices[w])
+            else:
+                call_stack.pop()
+                if lowlink[v] == indices[v]:
+                    close_component(v)
+                if call_stack:
+                    parent = call_stack[-1][0]
+                    lowlink[parent] = min(lowlink[parent], lowlink[v])
     return list(cycle_nodes)
 
 

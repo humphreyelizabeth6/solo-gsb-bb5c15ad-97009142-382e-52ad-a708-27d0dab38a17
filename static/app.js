@@ -46,26 +46,51 @@ function bfsReachable(start, adj) {
   return seen;
 }
 
+// Iterative Tarjan SCC: the live editor runs this on every edit, so it must
+// stay off the JS call stack — a thousand-node straight chain used to abort
+// instant marking with a recursion error. Each frame is [node, next-neighbor];
+// when it resumes after a child search it keeps scanning remaining neighbors.
 function tarjanCycles(ids, adj) {
   let counter = 0;
-  const index = new Map(), low = new Map(), stack = [], on = new Set(), cyc = new Set();
-  const connect = (v) => {
-    index.set(v, counter); low.set(v, counter); counter++;
-    stack.push(v); on.add(v);
-    for (const w of adj.get(v) || []) {
-      if (!w) continue;
-      if (!index.has(w)) { connect(w); low.set(v, Math.min(low.get(v), low.get(w))); }
-      else if (on.has(w)) low.set(v, Math.min(low.get(v), index.get(w)));
-    }
-    if (low.get(v) === index.get(v)) {
-      const comp = [];
-      let w;
-      do { w = stack.pop(); on.delete(w); comp.push(w); } while (w !== v);
-      if (comp.length > 1) comp.forEach((x) => cyc.add(x));
-      else if ((adj.get(v) || []).includes(v)) cyc.add(v);
-    }
+  const index = new Map(), low = new Map(), on = new Set(), cyc = new Set();
+  const tarjanStack = [];
+
+  const closeComponent = (root) => {
+    const comp = [];
+    let w;
+    do { w = tarjanStack.pop(); on.delete(w); comp.push(w); } while (w !== root);
+    if (comp.length > 1) comp.forEach((x) => cyc.add(x));
+    else if ((adj.get(root) || []).includes(root)) cyc.add(root);
   };
-  ids.forEach((id) => { if (!index.has(id)) connect(id); });
+
+  ids.forEach((start) => {
+    if (index.has(start)) return;
+    index.set(start, counter); low.set(start, counter); counter++;
+    tarjanStack.push(start); on.add(start);
+    const callStack = [[start, 0]];
+    while (callStack.length) {
+      const frame = callStack[callStack.length - 1];
+      const v = frame[0];
+      const neighbors = adj.get(v) || [];
+      if (frame[1] < neighbors.length) {
+        const w = neighbors[frame[1]++];
+        if (!index.has(w)) {
+          index.set(w, counter); low.set(w, counter); counter++;
+          tarjanStack.push(w); on.add(w);
+          callStack.push([w, 0]);
+        } else if (on.has(w)) {
+          low.set(v, Math.min(low.get(v), index.get(w)));
+        }
+      } else {
+        callStack.pop();
+        if (low.get(v) === index.get(v)) closeComponent(v);
+        if (callStack.length) {
+          const parent = callStack[callStack.length - 1][0];
+          low.set(parent, Math.min(low.get(parent), low.get(v)));
+        }
+      }
+    }
+  });
   return cyc;
 }
 
